@@ -1,0 +1,1 @@
+from .fanfair import FanFAIR

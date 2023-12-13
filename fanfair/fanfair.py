@@ -1,0 +1,290 @@
+import simpful as sf
+import pandas as pd
+from numpy import array, abs
+from statistics import stdev
+from math import prod
+from scipy import stats
+
+
+class FanFAIR:
+
+  def __init__(self, dataset=None, output_column=None,
+               drop_columns=None, outliers_detection_method="ECOD"):
+
+    # default values
+    self._balance_value = None
+    self._numerosity_value = None
+    self._outliers_ratio = None
+    self._compliance_value = None
+    self._incompleteness = None
+    self._numsamples = 0
+    self._numfeatures = 0
+
+    # if a dataset is specified, open the file with pandas and extract info
+    if dataset is not None:
+      self._import_dataset(dataset, output_column, drop_columns, \
+                           outliers_detection_method=outliers_detection_method)
+
+    # create the fuzzy reasoner for dataset assesment
+    self._reasoner = sf.FuzzySystem(verbose=True, show_banner=False)
+
+    # create linguistic variable "balance"
+    LV_balance = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,1])
+    self._reasoner.add_linguistic_variable("balance", LV_balance)
+
+    # create linguistic variable "numerosity"
+    LV_numerosity = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,10])
+    self._reasoner.add_linguistic_variable("numerosity", LV_numerosity)
+
+    # create linguistic variable "unevenness"
+    LV_outliers = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,0.1])
+    self._reasoner.add_linguistic_variable("unevenness", LV_outliers)
+
+    # originally, compliance ranged from 0 to 10 and considered:
+    # anon, license, legal basis, DPIA, LIA, transfer, reuse, contract, explicit consent, ethical assessment
+    # the current version of FanFAIR assumes 5 criteria:
+    # 1) data protection law
+    # 2) copyright law
+    # 3) medical law
+    # 4) non-discrimination law
+    # 5) ethics
+    LV_compliance = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,5])
+    self._reasoner.add_linguistic_variable("compliance", LV_compliance)
+
+    # create linguistic variable "quality"
+    LV_quality = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,1])
+    self._reasoner.add_linguistic_variable("quality", LV_quality)
+
+    # create linguistic variable "incompleteness"
+    LV_incompleteness = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,1])
+    self._reasoner.add_linguistic_variable("incompleteness", LV_incompleteness)
+
+    # create outputs
+    self._reasoner.set_crisp_output_value("low_fairness", 0)
+    self._reasoner.set_crisp_output_value("high_fairness", 1)
+
+    # create rule base
+    R1 = "IF (balance IS high) THEN (phi IS high_fairness)"
+    R2 = "IF (balance IS low) THEN (phi IS low_fairness)"
+
+    R3 = "IF (numerosity IS high) THEN (phi IS high_fairness)"
+    R4 = "IF (numerosity IS low) THEN (phi IS low_fairness)"
+
+    R5 = "IF (unevenness IS high) THEN (phi IS low_fairness)"
+    R6 = "IF (unevenness IS low) THEN (phi IS high_fairness)"
+
+    R7 = "IF (compliance IS high) THEN (phi IS high_fairness)"
+    R8 = "IF (compliance IS low) THEN (phi IS low_fairness)"
+
+    R9 = "IF (quality IS high) THEN (phi IS high_fairness)"
+    R10 = "IF (quality IS low) THEN (phi IS low_fairness)"
+
+    R11 = "IF (incompleteness IS high) THEN (phi IS low_fairness)"
+    R12 = "IF (incompleteness IS low) THEN (phi IS high_fairness)"
+
+    self._reasoner.add_rules([R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12])
+
+
+  def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD'):
+
+    # partition data into input and output
+    DF = pd.read_csv(path).reset_index(drop=True)
+    if drop_columns is not None:
+      DF.drop(drop_columns, inplace=True, axis=1)
+    input_DF = DF.drop([output_column], axis=1)
+    output_DF = DF[output_column]
+
+    # check that we have some data!
+    self.set_numsamples(len(DF))
+    if self._numsamples==0:
+      print("WARNING: empty dataset detected")
+    else:
+      print(" * Number of samples: %d" % self._numsamples)
+
+    # check number of features
+    self.set_numfeatures(len(input_DF.columns))
+    if self._numfeatures==0:
+      print("WARNING: no features detected in the dataset")
+    else:
+      print(" * Number of features: %d" % self._numfeatures)
+
+    # check NaNs
+    total_nans = input_DF.isna().sum().sum()
+    total_values = prod(input_DF.shape)
+    ratio_nans = total_nans/total_values
+    print(" * %d/%d NaN values in the dataframe detected (%.2f%%)" % (total_nans, total_values, ratio_nans))
+    self.set_incompleteness(ratio_nans)
+
+    # check outliers
+    outliers = {}
+
+    self._used_outlier_method = outliers_detection_method
+
+    if outliers_detection_method=="zscores":
+      for column in input_DF.columns:
+        zscores = abs(stats.zscore(DF[column]))
+        outliers[column] = len(DF[column][zscores>=3])
+
+        print(" * Outliers detected (anomalous Z-score):")
+        print(outliers)
+        total_outliers = sum(outliers.values())
+        ratio_outliers_samples = total_outliers/total_values
+        print(" * Ratio outliers:total values: %.2f" % ratio_outliers_samples)
+        self.set_outliers(ratio_outliers_samples)
+
+    elif outliers_detection_method=="ECOD":
+      from pyod.models.ecod import ECOD
+      print(" * Detecting multivariate outlying objects with ECOD...")
+      clf = ECOD(n_jobs=-1) # n_jobs=-1 -> use all cores
+      clf.fit(DF)
+      total_outlying_objects = sum(clf.labels_)
+      ratio_outlying_objects = total_outlying_objects/len(DF)
+      print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outlying_objects, len(DF), ratio_outlying_objects*100))
+      self.set_outliers(ratio_outlying_objects)
+
+    elif outliers_detection_method=="IForest":
+      from pyod.models.iforest import IForest
+      print(" * Detecting multivariate outlying objects with Isolation Forest...")
+      clf = IForest()
+      clf.fit(DF)
+      total_outlying_objects = sum(clf.labels_)
+      ratio_outlying_objects = total_outlying_objects/len(DF)
+      print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outlying_objects, len(DF), ratio_outlying_objects*100))
+      self.set_outliers(ratio_outlying_objects)
+
+
+    else:
+      raise Exception(" * %s outlier detection method not supported, aborting." % outliers_detection_method)
+
+
+    # calculate numerosity ratio (above 10 is fine)
+    num_ratio = self._numsamples/self._numfeatures
+    self.set_numerosity(num_ratio)
+
+    # calculate balance
+    print(output_DF.value_counts())
+    counts_classes = array(output_DF.value_counts())
+    normalized_counts = counts_classes/counts_classes.sum()
+    print(" * Detected classes proportions:", normalized_counts)
+    std_normalized_counts = stdev(normalized_counts)
+    ref_std = [0]*len(counts_classes); ref_std[0] = 1; ref_std = stdev(ref_std)
+    standardized_stdev = 1. - std_normalized_counts/ref_std
+    print ( " * Standardized stdev: %.2f" % standardized_stdev)
+    self.set_balance(standardized_stdev)
+
+  def set_balance(self, value):
+    self._balance_value = value
+    print (" * Balance set to: %.2f" % value)
+
+  def set_numerosity(self, value):
+    self._numerosity_value = value
+    print (" * Numerosity ratio set to %.2f" % value)
+
+  def set_outliers(self, value):
+    self._outliers_ratio = value
+
+  def set_compliance(self, compliance_dictionary={}):
+    if all(type(v)==bool for v in compliance_dictionary.values()):
+      self._compliance_value = len(list(filter(None, compliance_dictionary.values())))
+    else:
+      print ("ERROR: please specify a compliance dictionary.")
+      exit()
+
+  def set_quality(self, value):
+    self._quality_value = value
+
+  def set_incompleteness(self, value):
+    self._incompleteness_value = value
+    print(" * Incompleteness ratio set to %.2f" % value)
+
+  def set_numsamples(self, value):
+    self._numsamples = value
+
+  def set_numfeatures(self, value):
+    self._numfeatures = value
+
+  def calculate_fairness(self):
+    if self._balance_value is None:
+      raise Exception("ERROR: please calculate balance before assessing fairness of dataset")
+
+    if self._numerosity_value is None:
+      raise Exception("please calculate numerosity before assessing fairness of dataset")
+
+    if self._outliers_ratio is None:
+      raise Exception("please calculate outliers ratio before assessing fairness of dataset")
+
+    if self._compliance_value is None:
+      raise Exception("please calculate compliance before assessing fairness of dataset")
+
+    if self._quality_value is None:
+      raise Exception("please calculate quality before assessing fairness of dataset")
+
+    if self._incompleteness_value is None:
+      raise Exception("please calculate incompleteness before assessing fairness of dataset")
+
+    self._reasoner.set_variable("balance", self._balance_value)
+    self._reasoner.set_variable("numerosity", self._numerosity_value)
+    self._reasoner.set_variable("unevenness", self._outliers_ratio)
+    self._reasoner.set_variable("compliance", self._compliance_value)
+    self._reasoner.set_variable("quality", self._quality_value)
+    self._reasoner.set_variable("incompleteness", self._incompleteness_value)
+
+    res = self._reasoner.inference()
+
+    return res["phi"]
+
+  def produce_report(self, max_figures_per_row=3, plot_fuzzy_sets=True, plot_gauge=True):
+    """ Create a summary plot with all fuzzy sets, for all fairness metrics. """
+
+    if plot_fuzzy_sets:
+     self._reasoner.produce_figure(max_figures_per_row=max_figures_per_row,
+                      element_dict={"quality": self._quality_value,
+                                    "balance": self._balance_value,
+                                    "numerosity": self._numerosity_value,
+                                    "unevenness": self._outliers_ratio,
+                                    "compliance": self._compliance_value,
+                                    "incompleteness": self._incompleteness_value })
+
+    import matplotlib.pyplot as plt
+    from math import pi
+    self._gauge = plt.figure(figsize=(15,7))
+    ax = self._gauge.add_subplot(projection="polar")
+
+    colors = ['#4dab6d', "#72c66e", "#c1da64", "#f6ee54", "#fabd57", "#f36d54"]
+    from numpy import arange
+
+    values = arange(100,0,6)
+    x_axis_vals = [0, pi*(1/6), pi*(2/6), pi*(3/6), pi*(4/6), pi*(5/6)]
+
+    ax.bar(x=x_axis_vals, width=0.5, height=0.5, bottom=2,
+       linewidth=3, edgecolor="white", color=colors, align="edge")
+
+    plt.annotate("Excellent", xy=(0.16,2.1), rotation=-75, color="white", fontweight="bold");
+    plt.annotate("Very bad", xy=(3.0,2.25), rotation=75, color="white", fontweight="bold");
+
+    for loc, val in zip(x_axis_vals, values):
+      plt.annotate(val, xy=(loc, 2.5), ha="right" if val<=20 else "left")
+
+    # hide lines and ticks
+    ax.grid(False)
+    ax.set_yticklabels([])
+    ax.set_xticklabels([])
+    ax.spines['polar'].set_visible(False)
+
+    value = self.calculate_fairness()
+
+    plt.annotate("%.0f%%" % (value*100), xytext=(0,0), xy=((1-value)*pi, 2.0),
+             arrowprops=dict(arrowstyle="wedge, tail_width=0.5", color="black", shrinkA=0),
+             bbox=dict(boxstyle="circle", facecolor="black", linewidth=2.0, ),
+             fontsize=30, color="white", ha="center"
+            )
+    self._gauge.tight_layout()
+
+import seaborn as sns
+
+sns.set_style("white")
+sns.set_palette("husl", 3)
+
+if __name__ == "__main__":
+
+  pass
