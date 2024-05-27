@@ -2,7 +2,7 @@ from distutils.core import setup
 setup(
   name = 'FanFAIR',
   packages = ['fanfair'], 
-  version = '0.0.1',
+  version = '1.0.1',
   description = 'FanFAIR, semi-automatic assessment of datasets fairness',
   author = 'Chiara Gallese, Marco S. Nobile',
   author_email = 'marco.nobile@unive.it',
