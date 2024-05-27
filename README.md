@@ -29,3 +29,6 @@ If you find FanFAIR useful for your research, please cite our project as follows
 > Gallese C., Scantamburlo T., Manzoni L., Nobile M.S.: Investigating Semi-Automatic Assessment of Data Sets Fairness by Means of Fuzzy Logic, Proceedings of the 20th IEEE Conference on Computational Intelligence in Bioinformatics and Computational Biology (IEEE CIBCB 2023), 2023 
 
 If you need additional information, or want to see additional metrics implemented in FanFAIR, please feel free to contact Dr. Chiara Gallese (chiara.gallese@unito.it). 
+
+## Acknowledgements
+![FanFAIR is funded by the European Union](assets/EN_FundedbytheEU_RGB_POS.png)
