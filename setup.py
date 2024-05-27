@@ -10,6 +10,7 @@ setup(
   keywords = ['fuzzy logic', 'dataset analysis', 'dataset fairness'], # arbitrary keywords
   license='LICENSE.txt',
   long_description=open('README.md', encoding='utf-8').read(),
+  long_description_content_type='text/markdown',
   classifiers = ['Programming Language :: Python :: 3.7'],
   install_requires=[ 'numpy', 'simpful', 'scipy', 'pandas', 'matplotlib' ],
 )
