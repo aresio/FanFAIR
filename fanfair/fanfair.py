@@ -1,15 +1,17 @@
 import simpful as sf
 import pandas as pd
-from numpy import array, abs
+from numpy import array, sqrt, abs, median, arange
 from statistics import stdev
 from math import prod
 from scipy import stats
-
+import matplotlib.pyplot as plt
+from math import pi
+    
 
 class FanFAIR:
 
   def __init__(self, dataset=None, output_column=None,
-               drop_columns=None, outliers_detection_method="ECOD"):
+               drop_columns=None, outliers_detection_method="ECOD", balance_method="Hellinger"):
 
     # default values
     self._balance_value = None
@@ -23,7 +25,7 @@ class FanFAIR:
     # if a dataset is specified, open the file with pandas and extract info
     if dataset is not None:
       self._import_dataset(dataset, output_column, drop_columns, \
-                           outliers_detection_method=outliers_detection_method)
+                           outliers_detection_method=outliers_detection_method, balance_method=balance_method)
 
     # create the fuzzy reasoner for dataset assesment
     self._reasoner = sf.FuzzySystem(verbose=True, show_banner=False)
@@ -85,7 +87,7 @@ class FanFAIR:
     self._reasoner.add_rules([R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12])
 
 
-  def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD'):
+  def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD', balance_method="sigma_ratio"):
 
     # partition data into input and output
     DF = pd.read_csv(path).reset_index(drop=True)
@@ -115,7 +117,11 @@ class FanFAIR:
     print(" * %d/%d NaN values in the dataframe detected (%.2f%%)" % (total_nans, total_values, ratio_nans))
     self.set_incompleteness(ratio_nans)
 
-    # check outliers
+
+    ######################
+    # OUTLIERS DETECTION #
+    ###################### 
+    
     outliers = {}
 
     self._used_outlier_method = outliers_detection_method
@@ -125,18 +131,35 @@ class FanFAIR:
         zscores = abs(stats.zscore(DF[column]))
         outliers[column] = len(DF[column][zscores>=3])
 
-        print(" * Outliers detected (anomalous Z-score):")
-        print(outliers)
-        total_outliers = sum(outliers.values())
-        ratio_outliers_samples = total_outliers/total_values
-        print(" * Ratio outliers:total values: %.2f" % ratio_outliers_samples)
-        self.set_outliers(ratio_outliers_samples)
+      print(" * Outliers detected (anomalous Z-score):")
+      print(outliers)
+      total_outliers = sum(outliers.values())
+      ratio_outliers_samples = total_outliers/total_values
+      print(" * Ratio outliers:total values: %.2f" % ratio_outliers_samples)
+      self.set_outliers(ratio_outliers_samples)
 
+    elif outliers_detection_method=="modified_zscores":
+      for column in input_DF.columns:
+
+        array_median = median(DF[column])
+        abs_diff = abs(DF[column]-array_median)
+        median_abs_diff = median(abs_diff)
+        modified_zscores =  0.6745* (DF[column]-array_median)/median_abs_diff
+        #print(modified_zscores)
+        outliers[column] = len(DF[column][modified_zscores>=3])
+
+      print(" * Outliers detected (anomalous modified Z-score):")
+      print(outliers)
+      total_outliers = sum(outliers.values())
+      ratio_outliers_samples = total_outliers/total_values
+      print(" * Ratio outliers:total values: %.2f" % ratio_outliers_samples)
+      self.set_outliers(ratio_outliers_samples)
+      
     elif outliers_detection_method=="ECOD":
       from pyod.models.ecod import ECOD
       print(" * Detecting multivariate outlying objects with ECOD...")
       clf = ECOD(n_jobs=-1) # n_jobs=-1 -> use all cores
-      clf.fit(DF)
+      clf.fit(input_DF, output_DF)
       total_outlying_objects = sum(clf.labels_)
       ratio_outlying_objects = total_outlying_objects/len(DF)
       print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outlying_objects, len(DF), ratio_outlying_objects*100))
@@ -146,31 +169,71 @@ class FanFAIR:
       from pyod.models.iforest import IForest
       print(" * Detecting multivariate outlying objects with Isolation Forest...")
       clf = IForest()
-      clf.fit(DF)
+      clf.fit(input_DF, output_DF)
       total_outlying_objects = sum(clf.labels_)
       ratio_outlying_objects = total_outlying_objects/len(DF)
       print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outlying_objects, len(DF), ratio_outlying_objects*100))
       self.set_outliers(ratio_outlying_objects)
 
-
     else:
       raise Exception(" * %s outlier detection method not supported, aborting." % outliers_detection_method)
+
+
+    #########################
+    # NUMEROSITY ASSESSMENT #
+    #########################
 
 
     # calculate numerosity ratio (above 10 is fine)
     num_ratio = self._numsamples/self._numfeatures
     self.set_numerosity(num_ratio)
 
+
+    ######################
+    # BALANCE ASSESSMENT #
+    ######################
+
+    self._used_balance_method = balance_method
+
     # calculate balance
-    print(output_DF.value_counts())
-    counts_classes = array(output_DF.value_counts())
-    normalized_counts = counts_classes/counts_classes.sum()
-    print(" * Detected classes proportions:", normalized_counts)
-    std_normalized_counts = stdev(normalized_counts)
-    ref_std = [0]*len(counts_classes); ref_std[0] = 1; ref_std = stdev(ref_std)
-    standardized_stdev = 1. - std_normalized_counts/ref_std
-    print ( " * Standardized stdev: %.2f" % standardized_stdev)
-    self.set_balance(standardized_stdev)
+    if balance_method=="sigma_ratio":
+      print(output_DF.value_counts())
+      counts_classes = array(output_DF.value_counts())
+      normalized_counts = counts_classes/counts_classes.sum()
+      print(" * Detected classes proportions:", normalized_counts)
+      std_normalized_counts = stdev(normalized_counts)
+      ref_std = [0]*len(counts_classes); ref_std[0] = 1; ref_std = stdev(ref_std)
+      standardized_stdev = 1. - std_normalized_counts/ref_std
+      print ( " * Standardized stdev: %.2f" % standardized_stdev)
+      self.set_balance(standardized_stdev)
+
+    elif balance_method=="Hellinger":
+      print(" * Checking balance with Hellinger-based entropy")
+
+      values  = output_DF.unique()
+      K = len(values)
+     
+      # calculate relative frequencies of all classes
+      print(output_DF.value_counts())
+      counts_classes = array(output_DF.value_counts())
+      Pks = counts_classes/counts_classes.sum()
+      #print(" * Detected classes proportions:", Pks)
+
+      res = 0
+      for k in range(K):
+        res += sqrt(Pks[k]/K)
+      numerator = 1-res
+      denominator = 1-sqrt(1/K)
+      result = 1-sqrt(numerator/denominator)
+      print(" * Hellinger-based entropy: %.2f" % result)
+      self.set_balance(result)
+
+
+    else:
+      raise Exception(" * %s data set balance method not supported, aborting." % balance_method)
+   
+
+    self._dataset_file = path
 
   def set_balance(self, value):
     self._balance_value = value
@@ -233,11 +296,18 @@ class FanFAIR:
 
     return res["phi"]
 
-  def produce_report(self, max_figures_per_row=3, plot_fuzzy_sets=True, plot_gauge=True):
+  def produce_report(self, max_figures_per_row=3, 
+    plot_fuzzy_sets=True, 
+    plot_gauge=True, 
+    model_file="",
+    gauge_file=""
+    ):
     """ Create a summary plot with all fuzzy sets, for all fairness metrics. """
 
     if plot_fuzzy_sets:
-     self._reasoner.produce_figure(max_figures_per_row=max_figures_per_row,
+     self._reasoner.produce_figure(
+                      outputfile=model_file,
+                      max_figures_per_row=max_figures_per_row, 
                       element_dict={"quality": self._quality_value,
                                     "balance": self._balance_value,
                                     "numerosity": self._numerosity_value,
@@ -245,14 +315,11 @@ class FanFAIR:
                                     "compliance": self._compliance_value,
                                     "incompleteness": self._incompleteness_value })
 
-    import matplotlib.pyplot as plt
-    from math import pi
     self._gauge = plt.figure(figsize=(15,7))
     ax = self._gauge.add_subplot(projection="polar")
 
     colors = ['#4dab6d', "#72c66e", "#c1da64", "#f6ee54", "#fabd57", "#f36d54"]
-    from numpy import arange
-
+  
     values = arange(100,0,6)
     x_axis_vals = [0, pi*(1/6), pi*(2/6), pi*(3/6), pi*(4/6), pi*(5/6)]
 
@@ -273,12 +340,37 @@ class FanFAIR:
 
     value = self.calculate_fairness()
 
+    bar = "[%s%s]" % ( "█"*int(value*10), " "*(10-int(value*10)))
+    print (" >> Data set's calculated fairness: %s %.1f%%" % (bar, value*100)) 
+   
     plt.annotate("%.0f%%" % (value*100), xytext=(0,0), xy=((1-value)*pi, 2.0),
              arrowprops=dict(arrowstyle="wedge, tail_width=0.5", color="black", shrinkA=0),
              bbox=dict(boxstyle="circle", facecolor="black", linewidth=2.0, ),
              fontsize=30, color="white", ha="center"
             )
+
+    # data set file name
+    plt.text(0.5, 0.35, "Dataset: %s" % self._dataset_file, color="black", ha="center",
+      transform=ax.transAxes)
+
+    # outlier detection method
+    plt.text(0.5, 0.3, "Outlier detection method: %s" % self._used_outlier_method, color="black", ha="center",
+      transform=ax.transAxes)
+
+    # balance calculation method
+    if self._used_balance_method=="Hellinger":
+      balmethod = "Hellinger-based entropy"
+    elif self._used_balance_method=="sigma-ratio":
+      balmethod = "Ratio of sigmas (legacy)"
+
+    plt.text(0.5, 0.25, "Balance calculation method: %s" % balmethod, color="black", ha="center",
+      transform=ax.transAxes)
+
     self._gauge.tight_layout()
+
+    if gauge_file!="": 
+      self._gauge.savefig(gauge_file)
+      print(" * Gauge exported to file", gauge_file)
 
 import seaborn as sns
 
