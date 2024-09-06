@@ -1,6 +1,6 @@
 import simpful as sf
 import pandas as pd
-from numpy import array, sqrt, abs, median, arange
+from numpy import array, sqrt, abs, median, arange, argmax
 from statistics import stdev
 from math import prod
 from scipy import stats
@@ -21,6 +21,12 @@ class FanFAIR:
     self._incompleteness = None
     self._numsamples = 0
     self._numfeatures = 0
+    self._maxsensitivity = 0
+
+    self._sensitive_variables = []
+    self._input_dataframe = None
+    self._column_names = None
+    self._clean_dataframe = None
 
     # if a dataset is specified, open the file with pandas and extract info
     if dataset is not None:
@@ -61,6 +67,10 @@ class FanFAIR:
     LV_incompleteness = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,1])
     self._reasoner.add_linguistic_variable("incompleteness", LV_incompleteness)
 
+   # create linguistic variable "correlation" between sensitive variable(s) and output
+    LV_correlation = sf.AutoTriangle(2, terms=["low", "high"], universe_of_discourse=[0,1])
+    self._reasoner.add_linguistic_variable("correlation", LV_correlation)
+
     # create outputs
     self._reasoner.set_crisp_output_value("low_fairness", 0)
     self._reasoner.set_crisp_output_value("high_fairness", 1)
@@ -84,7 +94,52 @@ class FanFAIR:
     R11 = "IF (incompleteness IS high) THEN (phi IS low_fairness)"
     R12 = "IF (incompleteness IS low) THEN (phi IS high_fairness)"
 
-    self._reasoner.add_rules([R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12])
+    # NEW for sensitive variables
+    R13 = "IF (correlation IS high) THEN (phi IS low_fairness)"
+    R14 = "IF (correlation IS low) THEN (phi IS high_fairness)"
+
+    self._reasoner.add_rules([R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14])
+
+
+  def set_sensitive_variables(self, list_sensitive_variables):
+    """
+      FanFAIR 2 gives the possibility to specify some 'sensitive' variables that
+      should never correlate with the output (else, some discrimination is present
+      in the dataset).
+
+      The absolute value of each sensitive variable is computed and aggregated using 
+      fuzzy operators.
+    """
+
+    self._sensitive_correlations = {}
+
+    if self._column_names is None:
+      raise Exception("cannot set sensitive variable(s) without opening a dataset first, aborting.")
+    
+    for sens_variable in list_sensitive_variables:
+      if sens_variable not in self._column_names:
+        raise Exception("the sensitive variable '%s' is not present in the dataset, aborting." % sens_variable)
+      else:
+
+        # currently, only binary labels are supported
+        values = set(self._output_dataframe)
+        print(" * Detected %d levels in output:" % len(values), values)
+        if len(values)!=2:
+          raise Exception("not supported, aborting.")
+        new_values = self._output_dataframe.replace(to_replace=values, value=[0,1])
+        abs_correlation = abs(self._input_dataframe[sens_variable].corr(new_values))
+        self._sensitive_correlations[sens_variable] = abs_correlation
+        print(" * Absolute correlation value between sensitive variable '%s' and output: %.2f" % (sens_variable, abs_correlation))
+    
+    worst_corr = max(self._sensitive_correlations.values())
+    worst_name = max(self._sensitive_correlations, key=self._sensitive_correlations.get)
+    
+    self._set_maxsensitivity(worst_corr)
+    self._worst_correlation_name = worst_name
+    
+    self._sensitive_variables = list_sensitive_variables
+    print(" * Sensitive variable(s) set:", ", ".join(self._sensitive_variables))
+
 
 
   def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD', balance_method="sigma_ratio"):
@@ -93,8 +148,14 @@ class FanFAIR:
     DF = pd.read_csv(path).reset_index(drop=True)
     if drop_columns is not None:
       DF.drop(drop_columns, inplace=True, axis=1)
+
+    self._clean_dataframe = DF.copy()
+
     input_DF = DF.drop([output_column], axis=1)
     output_DF = DF[output_column]
+
+    # experimental
+    self._column_names = input_DF.columns
 
     # check that we have some data!
     self.set_numsamples(len(DF))
@@ -214,6 +275,7 @@ class FanFAIR:
       K = len(values)
      
       # calculate relative frequencies of all classes
+      print(" * Value counts:")
       print(output_DF.value_counts())
       counts_classes = array(output_DF.value_counts())
       Pks = counts_classes/counts_classes.sum()
@@ -232,8 +294,10 @@ class FanFAIR:
     else:
       raise Exception(" * %s data set balance method not supported, aborting." % balance_method)
    
-
     self._dataset_file = path
+    self._input_dataframe = input_DF
+    self._output_dataframe = output_DF
+
 
   def set_balance(self, value):
     self._balance_value = value
@@ -266,6 +330,9 @@ class FanFAIR:
   def set_numfeatures(self, value):
     self._numfeatures = value
 
+  def _set_maxsensitivity(self, value):
+    self._maxsensitivity = value
+
   def calculate_fairness(self):
     if self._balance_value is None:
       raise Exception("ERROR: please calculate balance before assessing fairness of dataset")
@@ -289,14 +356,15 @@ class FanFAIR:
     self._reasoner.set_variable("numerosity", self._numerosity_value)
     self._reasoner.set_variable("unevenness", self._outliers_ratio)
     self._reasoner.set_variable("compliance", self._compliance_value)
-    self._reasoner.set_variable("quality", self._quality_value)
+    self._reasoner.set_variable("quality", self._quality_value) 
     self._reasoner.set_variable("incompleteness", self._incompleteness_value)
+    self._reasoner.set_variable("correlation", self._maxsensitivity)
 
     res = self._reasoner.inference()
 
     return res["phi"]
 
-  def produce_report(self, max_figures_per_row=3, 
+  def produce_report(self, max_figures_per_row=4, 
     plot_fuzzy_sets=True, 
     plot_gauge=True, 
     model_file="",
@@ -305,7 +373,7 @@ class FanFAIR:
     """ Create a summary plot with all fuzzy sets, for all fairness metrics. """
 
     if plot_fuzzy_sets:
-     self._reasoner.produce_figure(
+      self._reasoner.produce_figure(
                       outputfile=model_file,
                       max_figures_per_row=max_figures_per_row, 
                       element_dict={"quality": self._quality_value,
@@ -313,8 +381,10 @@ class FanFAIR:
                                     "numerosity": self._numerosity_value,
                                     "unevenness": self._outliers_ratio,
                                     "compliance": self._compliance_value,
-                                    "incompleteness": self._incompleteness_value })
+                                    "incompleteness": self._incompleteness_value,
+                                    "correlation": self._maxsensitivity })
 
+      
     self._gauge = plt.figure(figsize=(15,7))
     ax = self._gauge.add_subplot(projection="polar")
 
@@ -340,9 +410,6 @@ class FanFAIR:
 
     value = self.calculate_fairness()
 
-    bar = "[%s%s]" % ( "█"*int(value*10), " "*(10-int(value*10)))
-    print (" >> Data set's calculated fairness: %s %.1f%%" % (bar, value*100)) 
-   
     plt.annotate("%.0f%%" % (value*100), xytext=(0,0), xy=((1-value)*pi, 2.0),
              arrowprops=dict(arrowstyle="wedge, tail_width=0.5", color="black", shrinkA=0),
              bbox=dict(boxstyle="circle", facecolor="black", linewidth=2.0, ),
@@ -362,15 +429,23 @@ class FanFAIR:
       balmethod = "Hellinger-based entropy"
     elif self._used_balance_method=="sigma-ratio":
       balmethod = "Ratio of sigmas (legacy)"
-
     plt.text(0.5, 0.25, "Balance calculation method: %s" % balmethod, color="black", ha="center",
       transform=ax.transAxes)
+
+    # sensitive?
+    plt.text(0.5, 0.2, "Most sensitive variable: '%s', correlation with output: %.2f" % (self._worst_correlation_name, self._maxsensitivity), color="black", ha="center",
+      transform=ax.transAxes)
+
 
     self._gauge.tight_layout()
 
     if gauge_file!="": 
       self._gauge.savefig(gauge_file)
       print(" * Gauge exported to file", gauge_file)
+
+    bar = "[%s%s]" % ( "█"*int(value*10), " "*(10-int(value*10)))
+    print (" >> Data set's calculated fairness: %s %.1f%%" % (bar, value*100)) 
+   
 
 import seaborn as sns
 
