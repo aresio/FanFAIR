@@ -10,7 +10,7 @@ FanFAIR is designed to be as automatic as possible. However, two metrics (qualit
 ```
 from fanfair import FanFAIR
 
-FF = FanFAIR(dataset="myfile.csv", target_column="output")
+FF = FanFAIR(dataset="myfile.csv", output_column="output")
 FF.set_compliance( {"data_protection_law": True,
                     "copyright_law": True,
                     "medical_law": True,
