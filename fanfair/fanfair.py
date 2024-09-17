@@ -24,6 +24,7 @@ class FanFAIR:
     self._maxsensitivity = 0
 
     self._sensitive_variables = []
+    self._worst_correlation_name = None
     self._input_dataframe = None
     self._column_names = None
     self._clean_dataframe = None
@@ -433,8 +434,9 @@ class FanFAIR:
       transform=ax.transAxes)
 
     # sensitive?
-    plt.text(0.5, 0.2, "Most sensitive variable: '%s', correlation with output: %.2f" % (self._worst_correlation_name, self._maxsensitivity), color="black", ha="center",
-      transform=ax.transAxes)
+    if self._worst_correlation_name is not None:
+      plt.text(0.5, 0.2, "Most sensitive variable: '%s', correlation with output: %.2f" % (self._worst_correlation_name, 
+        self._maxsensitivity), color="black", ha="center", transform=ax.transAxes)
 
 
     self._gauge.tight_layout()
