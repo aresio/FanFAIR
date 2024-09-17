@@ -1,12 +1,14 @@
 import simpful as sf
 import pandas as pd
+import numpy as np
 from numpy import array, sqrt, abs, median, arange, argmax
 from statistics import stdev
 from math import prod
 from scipy import stats
 import matplotlib.pyplot as plt
 from math import pi
-    
+
+import warnings #TODO: solve isotree warnings
 
 class FanFAIR:
 
@@ -143,9 +145,13 @@ class FanFAIR:
 
 
   def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD', balance_method="sigma_ratio"):
+    
+    if isinstance(path,pd.DataFrame):
+      DF = path.copy()
+    else:
+      DF = pd.read_csv(path).reset_index(drop=True)
 
     # partition data into input and output
-    DF = pd.read_csv(path).reset_index(drop=True)
     if drop_columns is not None:
       DF.drop(drop_columns, inplace=True, axis=1)
 
@@ -236,6 +242,29 @@ class FanFAIR:
       print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outlying_objects, len(DF), ratio_outlying_objects*100))
       self.set_outliers(ratio_outlying_objects)
 
+    elif outliers_detection_method=="isotree":
+      from isotree import IsolationForest
+
+      # TODO: notify that all numbers are going float and dates are being excluded
+
+      X = input_DF.astype({ccc:'float' for ccc in input_DF.select_dtypes('number')}).select_dtypes(exclude='datetime64[ns]')
+
+      # TODO: UserWarning: Instantiating CategoricalDtype without any arguments?
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore",UserWarning)
+        ol_ev = IsolationForest().fit(X)
+
+      ol_scores = ol_ev.predict(X)
+
+      # TODO: provide other options for determining OL
+      # TODO: magic numbers! (.7 tresh)
+      outliers = ol_scores > min(.7,np.mean(ol_scores) + 3 * np.std(ol_scores))
+
+      total_outliers = outliers.sum()
+      ratio_outliers_samples = total_outliers/total_values
+      print(" * Calculated outlying instances: %d/%d (%.2f%%)" % (total_outliers, len(DF), ratio_outliers_samples*100))
+      self.set_outliers(ratio_outliers_samples)
+
     else:
       raise Exception(" * %s outlier detection method not supported, aborting." % outliers_detection_method)
 
@@ -293,8 +322,9 @@ class FanFAIR:
 
     else:
       raise Exception(" * %s data set balance method not supported, aborting." % balance_method)
-   
-    self._dataset_file = path
+
+    # TODO: allow naming pd.DataFrames
+    self._dataset_file = path if isinstance(path,str) else "Unnamed Dataset"
     self._input_dataframe = input_DF
     self._output_dataframe = output_DF
 
