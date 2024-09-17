@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text()
 setup(
   name = 'FanFAIR',
   packages = ['fanfair'], 
-  version = '1.0.2',
+  version = '1.0.3',
   description = 'FanFAIR, semi-automatic assessment of datasets fairness',
   author = 'Chiara Gallese, Marco S. Nobile',
   author_email = 'marco.nobile@unive.it',
