@@ -10,7 +10,7 @@ from math import pi
 
 class FanFAIR:
 
-  def __init__(self, dataset=None, output_column=None,
+  def __init__(self, dataset=None, dataframe=None, force_csv=False, output_column=None,
                drop_columns=None, outliers_detection_method="ECOD", balance_method="Hellinger"):
 
     # default values
@@ -28,11 +28,19 @@ class FanFAIR:
     self._input_dataframe = None
     self._column_names = None
     self._clean_dataframe = None
+    self._dataset_file = None
 
     # if a dataset is specified, open the file with pandas and extract info
     if dataset is not None:
-      self._import_dataset(dataset, output_column, drop_columns, \
+      dataframe = self._import_dataset_fromfile(dataset, force_csv)
+      self._import_dataset(dataframe, output_column, drop_columns, \
                            outliers_detection_method=outliers_detection_method, balance_method=balance_method)
+    elif dataframe is not None:
+      self._import_dataset(dataframe, output_column, drop_columns, \
+                           outliers_detection_method=outliers_detection_method, balance_method=balance_method)
+    else:
+      raise Exception("Please specify a dataset as file or Pandas' dataframe.")
+
 
     # create the fuzzy reasoner for dataset assesment
     self._reasoner = sf.FuzzySystem(verbose=True, show_banner=False)
@@ -142,11 +150,23 @@ class FanFAIR:
     print(" * Sensitive variable(s) set:", ", ".join(self._sensitive_variables))
 
 
+  def _import_dataset_fromfile(self, path, force_csv=False):
+    """
+      Imports the dataset as Panda's dataframe from path. Only supports XLSX and CSV files.
+    """
+    if path[-3:]=="csv" or force_csv:
+      DF = pd.read_csv(path).reset_index(drop=True)
+    elif path[-4:]=="xlsx":
+      DF = pd.read_excel(path).reset_index(drop=True)
+    else:
+      raise Exception("Not supported file type.")
+    self._dataset_file = path
+    return DF
 
-  def _import_dataset(self, path, output_column, drop_columns=None, outliers_detection_method='ECOD', balance_method="sigma_ratio"):
+  def _import_dataset(self, DF, output_column, drop_columns=None, outliers_detection_method='ECOD', balance_method="sigma_ratio"):
 
     # partition data into input and output
-    DF = pd.read_csv(path).reset_index(drop=True)
+    #DF = pd.read_csv(path).reset_index(drop=True)
     if drop_columns is not None:
       DF.drop(drop_columns, inplace=True, axis=1)
 
@@ -295,7 +315,6 @@ class FanFAIR:
     else:
       raise Exception(" * %s data set balance method not supported, aborting." % balance_method)
    
-    self._dataset_file = path
     self._input_dataframe = input_DF
     self._output_dataframe = output_DF
 
@@ -418,8 +437,9 @@ class FanFAIR:
             )
 
     # data set file name
-    plt.text(0.5, 0.35, "Dataset: %s" % self._dataset_file, color="black", ha="center",
-      transform=ax.transAxes)
+    if self._dataset_file is not None:
+      plt.text(0.5, 0.35, "Dataset: %s" % self._dataset_file, color="black", 
+        ha="center", transform=ax.transAxes)
 
     # outlier detection method
     plt.text(0.5, 0.3, "Outlier detection method: %s" % self._used_outlier_method, color="black", ha="center",
