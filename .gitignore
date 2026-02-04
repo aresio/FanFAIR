@@ -1,0 +1,5 @@
+dist
+FanFAIR.egg-info
+build
+test*
+__pycache__
