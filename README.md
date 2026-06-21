@@ -26,6 +26,8 @@ The analysis is automatically performed by calling the ```produce_report``` meth
 ## Citing FanFAIR 
 If you find FanFAIR useful for your research, please cite our project as follows:
 
+> Gallese, C., Scantamburlo, T., Manzoni, L., Giannerini, S., & Nobile, M. S. (2025). FanFAIR: sensitive data sets semi-automatic fairness assessment. BMC Medical Informatics and Decision Making, 25(Suppl 3), 329
+
 > Gallese C., Scantamburlo T., Manzoni L., Nobile M.S.: Investigating Semi-Automatic Assessment of Data Sets Fairness by Means of Fuzzy Logic, Proceedings of the 20th IEEE Conference on Computational Intelligence in Bioinformatics and Computational Biology (IEEE CIBCB 2023), 2023 
 
 If you need additional information, or want to see additional metrics implemented in FanFAIR, please feel free to contact Dr. Chiara Gallese (chiara.gallese@unito.it). 
