@@ -4,6 +4,9 @@ Semi-automatic assessment of datasets fairness
 ## What is FanFAIR
 FanFAIR is a rule-based approach based on fuzzy logic able to calculate some fairness metrics over a dataset and combine them into a single score, enabling a semi-automatic evaluation of a dataset in algorithmic fairness research.
 
+## Why is FanFAIR not fully automatic?
+We try to make FanFAIR as simple and automatic as possible, in order to make it very operational and streamlined. Nevertheless, a few analysis (notably, the legal compliance) cannot be entirely offloaded to algorithms and require the intervention of a domain expert human operator.
+
 ## Using FanFAIR
 FanFAIR is designed to be as automatic as possible. However, two metrics (quality, compliance) require human intervention. Here is an example of analysis performed with FanFAIR:
 
