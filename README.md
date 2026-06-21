@@ -22,6 +22,8 @@ FF.produce_report()
 
 The analysis is automatically performed by calling the ```produce_report``` method, which generates two main figures: the gauge with the overall fairness score (from 0% to 100%), and the plots of the linguistic variables of the fuzzy model, which provide a summary of the metrics for the dataset's fairenss features.
 
+The user can also specify a set of sensitive variables and FanFAIR will automatically check any correlations with the output and assess the fairness _ex post_ with respect to such features.  
+
 
 ## Citing FanFAIR 
 If you find FanFAIR useful for your research, please cite our project as follows:
